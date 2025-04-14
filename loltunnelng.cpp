@@ -1081,6 +1081,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    uint16_t defsocks5port = 1080;
+    /* https://datatracker.ietf.org/doc/html/rfc1928 */
+    hs_htons(&defsocks5port);
     std::unordered_map<uint16_t, uint16_t> portmap;
     std::set<uint16_t> udpports;
     uint16_t onport = 0;
@@ -1118,13 +1121,17 @@ int main(int argc, char* argv[]) {
             continue; // doesn't use nextarg
         }
         else if (arg == "--remap") {
-            portmap = parseportmap(nextarg);
+            auto newports = parseportmap(nextarg);
+            portmap.insert(newports.begin(), newports.end());
             ++i; continue;
             /* for local testing only! */
             /* remap 27015 to 27016 to avoid conflicts */
         }
         else if (arg == "--via") {
             socks5addr = parseaddress(nextarg);
+            /* in case port was unspecified */
+            if (socks5addr.port == 0)
+                socks5addr.port = defsocks5port;
             ++i; continue;
         }
         else if (arg == "--to") {
