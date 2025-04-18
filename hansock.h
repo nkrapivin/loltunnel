@@ -15,6 +15,7 @@
 extern "C" {
 #endif
 
+/* Generic return values for all hansock functions */
 typedef enum hs_result {
 	/* all is well */
 	hs_result_ok,
@@ -32,42 +33,57 @@ typedef enum hs_result {
 
 typedef enum hs_af {
 	hs_af_unknown,
+	/* IPv4 */
 	hs_af_inet,
+	/* IPv6 */
 	hs_af_inet6
 } hs_af;
 
 typedef enum hs_type {
 	hs_type_unknown,
+	/* STREAM socket */
 	hs_type_stream,
+	/* DATAGRAM socket */
 	hs_type_dgram
 } hs_type;
 
 typedef enum hs_protocol {
 	hs_protocol_unknown,
+	/* Try to guess based on hs_type */
 	hs_protocol_auto = hs_protocol_unknown,
+	/* Transmission Control Protocol */
 	hs_protocol_tcp,
+	/* User Datagram Protocol */
 	hs_protocol_udp
 } hs_protocol;
 
 typedef enum hs_address_type {
 	hs_address_type_unknown,
+	/* IPv4 */
 	hs_address_type_ipv4,
+	/* IPv6 */
 	hs_address_type_ipv6
 } hs_address_type;
 
 typedef enum hs_feature {
 	hs_feature_unknown,
+	/* Do not block on accept, read and recv. Return hs_result_pending instead */
 	hs_feature_nonblocking,
+	/* Allow binding multiple sockets on the same address */
 	hs_feature_reuseaddr,
 	hs_feature_keepalive
 } hs_feature;
 
 typedef enum hs_address_init {
 	hs_address_init_unknown,
+	/* 0.0.0.0 */
 	hs_address_init_ipv4_any,
+	/* 127.0.0.1 */
 	hs_address_init_ipv4_loopback,
 	hs_address_init_ipv4_broadcast,
+	/* ::/0 */
 	hs_address_init_ipv6_any,
+	/* ::1 */
 	hs_address_init_ipv6_loopback
 } hs_address_init;
 
@@ -88,16 +104,22 @@ typedef struct hs_socket hs_socket, *hs_hsocket;
 /* which events to poll for in a poll call? */
 typedef enum hs_event {
 	hs_event_unknown = (0 << 0),
+	/* Incoming data or a connection */
 	hs_event_in = (1 << 0),
+	/* Data can be written without blocking */
 	hs_event_out = (1 << 1),
+	/* Priority or out of band data */
 	hs_event_pri = (1 << 2),
+	/* Error condition (return only) */
 	hs_event_err = (1 << 3),
 	hs_event_hup = (1 << 4),
+	/* Invalid socket handle (return only) */
 	hs_event_nval = (1 << 5)
 } hs_event;
 
 typedef struct hs_poll_data {
 	hs_hsocket in_socket;
+	/* Bitmask of hs_event values */
 	hs_event inout_events;
 } hs_poll_data;
 
@@ -237,12 +259,12 @@ hs_result hs_socket_poll(
 	int in_timeout_in_ms
 );
 
-/* yes */
+/* Converts the 16 bit value in-place */
 hs_result hs_htons(
 	uint16_t *inout_value
 );
 
-/* yes */
+/* Converts the 32 bit value in-place */
 hs_result hs_htonl(
 	uint32_t* inout_value
 );

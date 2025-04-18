@@ -144,8 +144,8 @@ int printhelp() {
         "  --student\n"
         "  --ports portX-portY,port1,port2,portN\n"
         "  --to    realip:realport\n"
-        "  --via   socks5ip:socks5port\n"
-        "  --remap from1=to1,fromN=toN,fromX-fromY=toX-toY\n"
+        "  --via   socks5ip:socks5port                     [OPTIONAL!]\n"
+        "  --remap from1=to1,fromN=toN,fromX-fromY=toX-toY [OPTIONAL!]\n"
         "server mode:\n"
         "  --server\n"
         "  --on realport\n\n"
@@ -458,6 +458,12 @@ int studentloop(
     std::vector<uint8_t> buf;
     std::vector<uint8_t> dgrambuf(65539, 0);
 
+    /* if address was unspecified (no --via arg) then don't use socks */
+    bool nosocks = socks5addr.type == hs_address_type_unknown;
+    if (nosocks) {
+        printf("no socks5 address specified, will connect directly...\n");
+    }
+
     /* reverse port mapping */
     std::unordered_map<uint16_t, uint16_t> rportmap;
     for (const auto& kvp : portmap) {
@@ -528,67 +534,76 @@ int studentloop(
                 hsocks = hs_invalid_hsocket;
             }
 
-            hsr = hs_socket_create((hs_af)socks5addr.type, hs_type_stream, hs_protocol_tcp, &hsocks);
+            hsr = hs_socket_create((hs_af)(nosocks ? srvaddr.type : socks5addr.type), hs_type_stream, hs_protocol_tcp, &hsocks);
             if (hsr != hs_result_ok) {
-                fprintf(stderr, "socks5 failed socket create\n");
+                fprintf(stderr, "failed socket create\n");
                 break;
             }
 
             hsr = hs_socket_feature(hs_feature_nonblocking, 1, hsocks);
             if (hsr != hs_result_ok) {
-                fprintf(stderr, "socks5 failed nonblock mode\n");
+                fprintf(stderr, "failed nonblock mode\n");
                 break;
             }
 
-            hsr = blockingconnect(hsocks, &socks5addr);
-            if (hsr != hs_result_ok) {
-                fprintf(stderr, "connection failed, retrying...\n");
-                continue;
+            if (nosocks) {
+                hsr = blockingconnect(hsocks, &srvaddr);
+                if (hsr != hs_result_ok) {
+                    fprintf(stderr, "direct connection failed, retrying...\n");
+                    continue;
+                }
+            }
+            else {
+                hsr = blockingconnect(hsocks, &socks5addr);
+                if (hsr != hs_result_ok) {
+                    fprintf(stderr, "connection failed, retrying...\n");
+                    continue;
+                }
+
+                printf("connected, sending socks5 hello...\n");
+                uint8_t sockshi[] = {
+                    0x05, /* VERSION */
+                    0x01, /* NMETHODS */
+                    0x00  /* METHOD: No authentication required */
+                };
+                hsr = blockingsend(hsocks, sockshi, sizeof(sockshi), nullptr);
+                if (hsr != hs_result_ok) {
+                    fprintf(stderr, "failed to send socks5 hello\n");
+                    continue;
+                }
+
+                printf("sent, waiting for methods reply...\n");
+                buf.clear();
+                hsr = blockingtcprecv(hsocks, buf, 2);
+                if (hsr != hs_result_ok || buf.size() != 2) {
+                    fprintf(stderr, "failed to recv supported method\n");
+                    continue;
+                }
+
+                if (buf[0] != 0x05 || buf[1] != 0x00) {
+                    fprintf(stderr, "version or method invalid\n");
+                    continue;
+                }
+
+                hsr = sendsocks5cmd(hsocks, 0x01, srvaddr, std::string());
+                if (hsr != hs_result_ok) {
+                    fprintf(stderr, "failed to send socks5 connect cmd\n");
+                    continue;
+                }
+
+                uint8_t rep = 0;
+                hs_address bndaddr = { hs_address_type_unknown };
+                std::string bnddom;
+                hsr = handlesocks5cmd(hsocks, rep, bndaddr, bnddom);
+                if (hsr != hs_result_ok) {
+                    fprintf(stderr, "socks5 connect failed with REP=0x%02X,%s\n",
+                        (unsigned)rep,
+                        socks5reptostring(rep));
+                    continue;
+                }
             }
 
-            printf("connected, sending socks5 hello...\n");
-            uint8_t sockshi[] = {
-                0x05, /* VERSION */
-                0x01, /* NMETHODS */
-                0x00  /* METHOD: No authentication required */
-            };
-            hsr = blockingsend(hsocks, sockshi, sizeof(sockshi), nullptr);
-            if (hsr != hs_result_ok) {
-                fprintf(stderr, "failed to send socks5 hello\n");
-                continue;
-            }
-
-            printf("sent, waiting for methods reply...\n");
-            buf.clear();
-            hsr = blockingtcprecv(hsocks, buf, 2);
-            if (hsr != hs_result_ok || buf.size() != 2) {
-                fprintf(stderr, "failed to recv supported method\n");
-                continue;
-            }
-
-            if (buf[0] != 0x05 || buf[1] != 0x00) {
-                fprintf(stderr, "version or method invalid\n");
-                continue;
-            }
-
-            hsr = sendsocks5cmd(hsocks, 0x01, srvaddr, std::string());
-            if (hsr != hs_result_ok) {
-                fprintf(stderr, "failed to send socks5 connect cmd\n");
-                continue;
-            }
-
-            uint8_t rep = 0;
-            hs_address bndaddr = { hs_address_type_unknown };
-            std::string bnddom;
-            hsr = handlesocks5cmd(hsocks, rep, bndaddr, bnddom);
-            if (hsr != hs_result_ok) {
-                fprintf(stderr, "socks5 connect failed with REP=0x%02X,%s\n",
-                    (unsigned)rep,
-                    socks5reptostring(rep));
-                continue;
-            }
-
-            printf("socks5 connected OK\n");
+            printf("connected OK, clearing buffers...\n");
             havesocks = 1;
             udplisteners.back().in_socket = hsocks;
             buf.clear();
@@ -607,7 +622,7 @@ int studentloop(
         auto socksmask = udplisteners.back().inout_events;
         if (socksmask & (hs_event_hup | hs_event_err | hs_event_nval)) {
             havesocks = 0;
-            fprintf(stderr, "socks 5 error cond, retrying...\n");
+            fprintf(stderr, "TCP error condition, retrying...\n");
             continue;
             /* skip stuff below because it won't make any sense */
         }
@@ -1138,7 +1153,7 @@ int main(int argc, char* argv[]) {
             srvaddr = parseaddress(nextarg);
             ++i; continue;
         }
-        else if (arg == "--help" || arg == "-h") {
+        else if (arg == "--help" || arg == "-h" || arg == "-?") {
             return printhelp();
         }
     }

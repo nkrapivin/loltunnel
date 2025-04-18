@@ -314,22 +314,26 @@ hs_result hs_address_to_string(char* out_string, size_t in_size_of_string, const
         return hs_result_notinit;
     if (!out_string || !in_address_ptr || in_size_of_string < 2)
         return hs_result_invarg;
-    if (in_address_ptr->type == hs_address_type_ipv4) {
-        int r = snprintf(out_string,
-            in_size_of_string,
-            "%d.%d.%d.%d:%d",
-            (int)in_address_ptr->addr.ipv4u8[0],
-            (int)in_address_ptr->addr.ipv4u8[1],
-            (int)in_address_ptr->addr.ipv4u8[2],
-            (int)in_address_ptr->addr.ipv4u8[3],
-            (int)htons(in_address_ptr->port));
-        /* just in case */
-        if (r <= 1)
+    hs_result r;
+    uint8_t osaddr[osaddrsize] = { 0 };
+    int osaddrlen = sizeof(osaddr);
+    struct sockaddr* posaddr = (struct sockaddr*)&osaddr[0];
+    out_string[0] = '\0'; /* null terminate just in case */
+    r = hs_address_to_os_address(in_address_ptr, posaddr, &osaddrlen);
+    if (r)
+        return r;
+    char addrstr[INET6_ADDRSTRLEN + 2] = { 0 };
+    if (posaddr->sa_family == AF_INET) {
+        struct sockaddr_in* posaddr4 = (struct sockaddr_in*)posaddr;
+        if (!inet_ntop(posaddr4->sin_family, &posaddr4->sin_addr, addrstr, sizeof(addrstr)))
             return hs_result_oserror;
+        snprintf(out_string, in_size_of_string, "%s:%d", addrstr, (int)htons(posaddr4->sin_port));
     }
-    else if (in_address_ptr->type == hs_address_type_ipv6) {
-        /* TODO! Implement! */
-        return hs_result_oserror;
+    else if (posaddr->sa_family == AF_INET6) {
+        struct sockaddr_in6* posaddr6 = (struct sockaddr_in6*)posaddr;
+        if (!inet_ntop(posaddr6->sin6_family, &posaddr6->sin6_addr, addrstr, sizeof(addrstr)))
+            return hs_result_oserror;
+        snprintf(out_string, in_size_of_string, "[%s]:%d", addrstr, (int)htons(posaddr6->sin6_port));
     }
     else {
         /* Invalid address type */
